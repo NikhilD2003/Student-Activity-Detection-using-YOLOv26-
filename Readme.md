@@ -18,6 +18,8 @@ The system:
 
 # 📐 System Architecture
 
+<img width="942" height="851" alt="Arch drawio" src="https://github.com/user-attachments/assets/d8334cc5-e186-435c-af05-0f11a6b23440" />
+
 The pipeline consists of seven major stages:
 
 1. Dataset Merging & Harmonization  
@@ -27,44 +29,6 @@ The pipeline consists of seven major stages:
 5. Real-Time Inference + Tracking  
 6. Post-Inference Analytics  
 7. Interactive Streamlit Visualization  
-
----
-
----
-
-# 📂 Repository Structure
-
-├── merge_datasets.py
-├── train.py
-├── test_model.py
-├── inference.py
-├── analyze.py
-├── streamlit_app.py
-├── inference_engine.py
-├── analytics.py
-├── datasets/
-│ └── merged_dataset/
-│ ├── train/
-│ │ ├── images/
-│ │ └── labels/
-│ ├── val/
-│ │ ├── images/
-│ │ └── labels/
-│ ├── test/
-│ │ ├── images/
-│ │ └── labels/
-│ │ └── dataset.yaml
-├── weights/
-│ └── best.pt
-├── outputs/
-│ ├── output_inference.mp4
-│ └── detections_log.csv
-├── requirements.txt
-├── packages.txt
-└── README.md
-
-yaml
-Copy code
 
 ---
 
