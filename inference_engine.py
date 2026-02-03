@@ -14,11 +14,11 @@ def run_inference_streaming(
     frame_callback=None,
 ):
 
-    CONF_THRESH = 0.40
-    IOU_THRESH = 0.35
+    CONF_THRESH = 0.30
+    IOU_THRESH = 0.32
     IMG_SIZE = 640
 
-    TRACKER_CFG = ("bytetrack.yaml")
+    TRACKER_CFG = ("botsort.yaml")
     DEVICE = None
 
     SMOOTHING_FRAMES = 9
