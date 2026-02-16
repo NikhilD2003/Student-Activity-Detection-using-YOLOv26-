@@ -1,4 +1,3 @@
-import numpy as np
 import streamlit as st
 import tempfile
 import os
@@ -7,7 +6,9 @@ import subprocess
 import shutil
 import pandas as pd
 import plotly.express as px
+import av
 from ultralytics import YOLO
+from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
 from inference_engine import run_inference_streaming
 from analytics import compute_analytics, compute_analytics_from_df
@@ -38,6 +39,19 @@ def reencode_for_browser(src, dst):
 
 
 # ============================================================
+# SESSION STATE INIT
+# ============================================================
+
+if "live_df" not in st.session_state:
+    st.session_state.live_df = pd.DataFrame(columns=[
+        "timestamp","frame","student_id","class_name",
+        "confidence","x1","y1","x2","y2"
+    ])
+    st.session_state.frame_count = 0
+    st.session_state.model = YOLO("runs/detect/weights/best.pt")
+
+
+# ============================================================
 # UI
 # ============================================================
 
@@ -48,96 +62,93 @@ mode = st.radio("Select Input Mode", ["Upload Video", "Live Camera"])
 
 
 # ============================================================
-# 🔴 LIVE CAMERA — STREAMLIT CLOUD VERSION
+# 🔴 LIVE CAMERA MODE (CLOUD ENABLED)
 # ============================================================
 
 if mode == "Live Camera":
 
-    if "live_df" not in st.session_state:
-        st.session_state.live_df = pd.DataFrame(columns=[
-            "timestamp", "frame", "student_id",
-            "class_name", "confidence", "x1", "y1", "x2", "y2"
-        ])
-        st.session_state.frame_count = 0
-        st.session_state.model = YOLO("runs/detect/weights/best.pt")
+    class VideoProcessor(VideoProcessorBase):
 
-    img = st.camera_input("Capture frame")
+        def recv(self, frame):
 
-    if img is not None:
+            img = frame.to_ndarray(format="bgr24")
 
-        file_bytes = np.asarray(bytearray(img.read()), dtype=np.uint8)
-        frame = cv2.imdecode(file_bytes, 1)
+            st.session_state.frame_count += 1
+            timestamp = st.session_state.frame_count / 30
 
-        st.session_state.frame_count += 1
-        timestamp = st.session_state.frame_count / 30
-
-        results = st.session_state.model.track(
-            frame, persist=True, verbose=False
-        )
-
-        annotated = results[0].plot()
-
-        st.image(annotated, channels="BGR", use_container_width=True)
-
-        if results[0].boxes.id is not None:
-
-            ids = results[0].boxes.id.cpu().numpy().astype(int)
-            cls = results[0].boxes.cls.cpu().numpy().astype(int)
-            conf = results[0].boxes.conf.cpu().numpy()
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-
-            for i in range(len(ids)):
-
-                st.session_state.live_df.loc[
-                    len(st.session_state.live_df)
-                ] = [
-                    timestamp,
-                    st.session_state.frame_count,
-                    ids[i],
-                    st.session_state.model.names[cls[i]],
-                    conf[i],
-                    *boxes[i]
-                ]
-
-        if len(st.session_state.live_df) > 0:
-
-            analytics = compute_analytics_from_df(
-                st.session_state.live_df
+            results = st.session_state.model.track(
+                img, persist=True, verbose=False
             )
 
-            col1, col2 = st.columns([2, 1])
+            annotated = results[0].plot()
 
-            with col2:
+            if results[0].boxes.id is not None:
 
-                st.subheader("📊 Live Summary")
+                ids = results[0].boxes.id.cpu().numpy().astype(int)
+                cls = results[0].boxes.cls.cpu().numpy().astype(int)
+                conf = results[0].boxes.conf.cpu().numpy()
+                boxes = results[0].boxes.xyxy.cpu().numpy()
 
-                st.metric(
-                    "Total Students",
-                    analytics["total_students"]
-                )
+                for i in range(len(ids)):
 
-                fig = px.bar(
-                    analytics["activity_distribution"],
-                    x="class_name",
-                    y="frames",
-                    labels={
-                        "class_name": "Activity",
-                        "frames": "Total Frames",
-                    }
-                )
+                    st.session_state.live_df.loc[
+                        len(st.session_state.live_df)
+                    ] = [
+                        timestamp,
+                        st.session_state.frame_count,
+                        ids[i],
+                        st.session_state.model.names[cls[i]],
+                        conf[i],
+                        *boxes[i]
+                    ]
 
-                st.plotly_chart(fig, use_container_width=True)
+            return av.VideoFrame.from_ndarray(annotated, format="bgr24")
 
-                st.subheader("⏱ Duration (seconds)")
 
-                st.dataframe(
-                    analytics["student_activity_duration"],
-                    use_container_width=True
-                )
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        ctx = webrtc_streamer(
+            key="live",
+            video_processor_factory=VideoProcessor,
+            media_stream_constraints={"video": True, "audio": False},
+        )
+
+    if ctx.state.playing and len(st.session_state.live_df) > 0:
+
+        analytics = compute_analytics_from_df(st.session_state.live_df)
+
+        with col2:
+
+            st.subheader("📊 Live Summary")
+
+            st.metric(
+                "Total Students",
+                analytics["total_students"]
+            )
+
+            fig = px.bar(
+                analytics["activity_distribution"],
+                x="class_name",
+                y="frames",
+                labels={
+                    "class_name": "Activity",
+                    "frames": "Total Frames"
+                }
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.subheader("⏱ Duration (seconds)")
+
+            st.dataframe(
+                analytics["student_activity_duration"],
+                use_container_width=True
+            )
 
 
 # ============================================================
-# 🔵 UPLOAD VIDEO — YOUR ORIGINAL (UNCHANGED)
+# 🔵 UPLOAD VIDEO MODE (UNCHANGED)
 # ============================================================
 
 elif mode == "Upload Video":
