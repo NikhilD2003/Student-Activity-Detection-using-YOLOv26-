@@ -14,18 +14,15 @@ def run_inference_streaming(
     frame_callback=None,
 ):
 
-    CONF_THRESH = 0.30
-    IOU_THRESH = 0.32
-    IMG_SIZE = 640
+    CONF_THRESH = 0.40
+    IOU_THRESH = 0.45
+    IMG_SIZE = 768
 
-    TRACKER_CFG = ("botsort.yaml")
-    DEVICE = None
+    TRACKER_CFG = "botsort.yaml"
+    DEVICE = 0
 
     SMOOTHING_FRAMES = 9
     MIN_TRACK_AGE = 8
-
-    MAX_MISSING_FRAMES = 80
-    REID_DISTANCE = 140
 
     model = YOLO(model_path)
 
@@ -65,9 +62,6 @@ def run_inference_streaming(
     track_to_student = {}
     next_student_id = 1
 
-    last_seen = {}
-    seen_students = set()
-
     frame_num = 0
 
     while True:
@@ -94,7 +88,6 @@ def run_inference_streaming(
         )
 
         annotated = frame.copy()
-        active_students = set()
 
         if results and results[0].boxes is not None:
 
@@ -110,35 +103,14 @@ def run_inference_streaming(
                 conf = float(box.conf[0])
 
                 x1, y1, x2, y2 = map(int, xyxy)
-                cx = (x1 + x2) // 2
-                cy = (y1 + y2) // 2
 
                 class_name = model.names[cls_id]
 
-                if raw_id in track_to_student:
-                    student_id = track_to_student[raw_id]
+                if raw_id not in track_to_student:
+                    track_to_student[raw_id] = next_student_id
+                    next_student_id += 1
 
-                else:
-                    matched = None
-                    best_dist = float("inf")
-
-                    for sid, (lx, ly, last_f) in last_seen.items():
-                        if frame_num - last_f <= MAX_MISSING_FRAMES:
-                            d = np.hypot(cx - lx, cy - ly)
-                            if d < REID_DISTANCE and d < best_dist:
-                                matched = sid
-                                best_dist = d
-
-                    if matched is None:
-                        matched = next_student_id
-                        next_student_id += 1
-
-                    track_to_student[raw_id] = matched
-                    student_id = matched
-
-                seen_students.add(student_id)
-                active_students.add(student_id)
-                last_seen[student_id] = (cx, cy, frame_num)
+                student_id = track_to_student[raw_id]
 
                 track_history[student_id].append(class_name)
                 track_age[student_id] += 1
