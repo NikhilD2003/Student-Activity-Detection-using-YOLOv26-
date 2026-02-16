@@ -24,6 +24,10 @@ def run_inference_streaming(
     SMOOTHING_FRAMES = 9
     MIN_TRACK_AGE = 8
 
+    # ✅ NEW — controls preview speed
+    DISPLAY_EVERY_N_FRAMES = 5
+    PREVIEW_SIZE = (960, 540)
+
     model = YOLO(model_path)
 
     cap = cv2.VideoCapture(video_path)
@@ -150,8 +154,10 @@ def run_inference_streaming(
 
         writer.write(annotated)
 
-        if frame_callback:
-            frame_callback(annotated)
+        # ✅ FAST & SMOOTH PREVIEW (ONLY CHANGE)
+        if frame_callback and frame_num % DISPLAY_EVERY_N_FRAMES == 0:
+            preview = cv2.resize(annotated, PREVIEW_SIZE)
+            frame_callback(preview)
 
     cap.release()
     writer.release()
