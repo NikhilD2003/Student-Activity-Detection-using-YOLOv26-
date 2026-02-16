@@ -7,11 +7,29 @@ import shutil
 import pandas as pd
 import plotly.express as px
 import av
+import logging
+
 from ultralytics import YOLO
 from streamlit_webrtc import webrtc_streamer, VideoProcessorBase
 
 from inference_engine import run_inference_streaming
 from analytics import compute_analytics, compute_analytics_from_df
+
+
+# ============================================================
+# 🔇 SUPPRESS WEBRTC THREAD SHUTDOWN ERRORS
+# ============================================================
+
+logging.getLogger("streamlit_webrtc").setLevel(logging.ERROR)
+
+
+# ============================================================
+# 🌐 RTC CONFIG (FIX FOR STREAMLIT CLOUD)
+# ============================================================
+
+RTC_CONFIGURATION = {
+    "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+}
 
 
 # ============================================================
@@ -62,7 +80,7 @@ mode = st.radio("Select Input Mode", ["Upload Video", "Live Camera"])
 
 
 # ============================================================
-# 🔴 LIVE CAMERA MODE (CLOUD ENABLED)
+# 🔴 LIVE CAMERA MODE (CLOUD READY)
 # ============================================================
 
 if mode == "Live Camera":
@@ -108,10 +126,13 @@ if mode == "Live Camera":
     col1, col2 = st.columns([2, 1])
 
     with col1:
+
         ctx = webrtc_streamer(
             key="live",
             video_processor_factory=VideoProcessor,
             media_stream_constraints={"video": True, "audio": False},
+            rtc_configuration=RTC_CONFIGURATION,
+            async_processing=True,
         )
 
     if ctx.state.playing and len(st.session_state.live_df) > 0:
