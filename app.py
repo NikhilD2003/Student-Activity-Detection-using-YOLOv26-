@@ -37,7 +37,6 @@ RTC_CONFIGURATION = {
 # ============================================================
 
 def reencode_for_browser(src, dst):
-
     ffmpeg_bin = shutil.which("ffmpeg")
 
     cmd = [
@@ -62,7 +61,6 @@ if "live_df" not in st.session_state:
         "timestamp","frame","student_id","class_name",
         "confidence","x1","y1","x2","y2"
     ])
-    st.session_state.frame_count = 0
     st.session_state.model = YOLO("runs/detect/weights/best.pt")
 
 
@@ -77,7 +75,7 @@ mode = st.radio("Select Input Mode", ["Upload Video", "Live Camera"])
 
 
 # ============================================================
-# 🔴 LIVE MODE
+# 🔴 LIVE MODE (CLOUD SAFE)
 # ============================================================
 
 if mode == "Live Camera":
@@ -86,44 +84,46 @@ if mode == "Live Camera":
 
         def __init__(self):
             self.frame_count = 0
-            self.skip = 5   # 🔥 run YOLO every 5 frames
+            self.skip = 8   # 🔥 run YOLO every N frames
 
         def recv(self, frame):
 
             img = frame.to_ndarray(format="bgr24")
             self.frame_count += 1
 
+            # ✅ Warmup frames (VERY IMPORTANT)
+            if self.frame_count < 10:
+                return av.VideoFrame.from_ndarray(img, format="bgr24")
+
             annotated = img
 
             # 🚀 Run detection every N frames
             if self.frame_count % self.skip == 0:
 
-                results = st.session_state.model.track(
+                results = st.session_state.model(
                     img,
-                    persist=True,
                     conf=0.3,
                     verbose=False
                 )
 
                 annotated = results[0].plot()
 
-                if results[0].boxes.id is not None:
+                if results[0].boxes is not None:
 
-                    ids = results[0].boxes.id.cpu().numpy().astype(int)
+                    boxes = results[0].boxes.xyxy.cpu().numpy()
                     cls = results[0].boxes.cls.cpu().numpy().astype(int)
                     conf = results[0].boxes.conf.cpu().numpy()
-                    boxes = results[0].boxes.xyxy.cpu().numpy()
 
                     timestamp = self.frame_count / 30
 
-                    for i in range(len(ids)):
+                    for i in range(len(boxes)):
 
                         st.session_state.live_df.loc[
                             len(st.session_state.live_df)
                         ] = [
                             timestamp,
                             self.frame_count,
-                            ids[i],
+                            i,
                             st.session_state.model.names[cls[i]],
                             conf[i],
                             *boxes[i]
