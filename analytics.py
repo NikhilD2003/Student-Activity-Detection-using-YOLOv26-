@@ -7,14 +7,12 @@ def compute_analytics(csv_path):
 
     total_students = df["student_id"].nunique()
 
-    # OLD (kept for compatibility if needed elsewhere)
     activity_counts = (
         df.groupby("class_name")["student_id"]
         .count()
         .sort_values(ascending=False)
     )
 
-    # ✅ Activity distribution with frame counts + student list
     activity_distribution = (
         df.groupby("class_name")
         .agg(
@@ -24,7 +22,6 @@ def compute_analytics(csv_path):
         .reset_index()
     )
 
-    # ✅ Timeline for frame vs activity
     timeline = (
         df.groupby(["frame", "class_name"])
         .size()
@@ -37,7 +34,11 @@ def compute_analytics(csv_path):
 
     df = df.sort_values(["student_id", "timestamp"])
 
-    df["time_diff"] = df.groupby("student_id")["timestamp"].diff().fillna(0)
+    # time diff per student
+    df["time_diff"] = df.groupby("student_id")["timestamp"].diff()
+
+    # remove first NaN and negative / huge jumps (ID switches / missed detections)
+    df["time_diff"] = df["time_diff"].clip(lower=0, upper=1)
 
     student_activity_duration = (
         df.groupby(["student_id", "class_name"])["time_diff"]
@@ -51,12 +52,8 @@ def compute_analytics(csv_path):
         )
     )
 
-    student_activity_duration["duration_seconds"] = (
-        student_activity_duration["duration_seconds"].round(2)
-    )
-
     # =========================================================
-    # ✅ TEMPORAL FILTER — REMOVE NOISE (< 1 SECOND)
+    # ✅ FILTER BEFORE ROUNDING
     # =========================================================
 
     MIN_DURATION = 1.0
@@ -64,6 +61,11 @@ def compute_analytics(csv_path):
     student_activity_duration = student_activity_duration[
         student_activity_duration["duration_seconds"] >= MIN_DURATION
     ]
+
+    # round only for display
+    student_activity_duration["duration_seconds"] = (
+        student_activity_duration["duration_seconds"].round(2)
+    )
 
     # =========================================================
 
