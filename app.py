@@ -5,89 +5,40 @@ import cv2
 import subprocess
 import shutil
 import plotly.express as px
-import av
-
 from ultralytics import YOLO
-from streamlit_webrtc import webrtc_streamer, VideoProcessorBase, RTCConfiguration
 
 from inference_engine import run_inference_streaming
 from analytics import compute_analytics
 
 
 # ============================================================
-# ✅ MUST BE FIRST STREAMLIT COMMAND
+# PAGE CONFIG — MUST BE FIRST STREAMLIT COMMAND
 # ============================================================
-
 st.set_page_config(layout="wide")
 
+st.title("🎓 Student Activity Detection Dashboard")
 
 # ============================================================
-# ✅ LOAD MODEL ONCE (THREAD-SAFE)
+# SESSION STATE INIT (for live mode model)
 # ============================================================
-
-@st.cache_resource
-def load_model():
-    return YOLO("runs/detect/weights/best.pt")
-
-model = load_model()
+if "model" not in st.session_state:
+    st.session_state.model = YOLO("runs/detect/weights/best.pt")
 
 
 # ============================================================
-# WEBRTC CONFIG
+# FFMPEG RE-ENCODER
 # ============================================================
-
-RTC_CONFIGURATION = RTCConfiguration(
-    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-)
-
-
-# ============================================================
-# VIDEO PROCESSOR
-# ============================================================
-
-class VideoProcessor(VideoProcessorBase):
-    def __init__(self, model):
-        self.model = model
-        self.frame_count = 0
-        self.skip = 12
-
-    def recv(self, frame):
-
-        img = frame.to_ndarray(format="bgr24")
-        self.frame_count += 1
-
-        if self.frame_count % self.skip == 0:
-
-            small = cv2.resize(img, (640, 360))
-
-            results = self.model(
-                small,
-                imgsz=480,
-                conf=0.3,
-                verbose=False
-            )
-
-            if results and results[0].boxes is not None:
-                for box in results[0].boxes.xyxy:
-                    x1, y1, x2, y2 = map(int, box)
-                    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
-
-
-# ============================================================
-# FFMPEG
-# ============================================================
-
 def reencode_for_browser(src, dst):
 
     ffmpeg_bin = shutil.which("ffmpeg")
 
     if ffmpeg_bin is None:
-        raise RuntimeError("FFmpeg not found")
+        raise RuntimeError("FFmpeg not found.")
 
     cmd = [
-        ffmpeg_bin, "-y", "-i", src,
+        ffmpeg_bin,
+        "-y",
+        "-i", src,
         "-vcodec", "libx264",
         "-preset", "fast",
         "-pix_fmt", "yuv420p",
@@ -100,81 +51,136 @@ def reencode_for_browser(src, dst):
 
 
 # ============================================================
-# UI
+# MODE SELECTION
 # ============================================================
-
-st.title("🎓 Student Activity Detection Dashboard")
-
-
-# ================= LIVE =================
-
-st.subheader("📡 Live Classroom Monitoring")
-
-webrtc_streamer(
-    key="live",
-    rtc_configuration=RTC_CONFIGURATION,
-    video_processor_factory=lambda: VideoProcessor(model),
-    media_stream_constraints={"video": True, "audio": False},
+mode = st.radio(
+    "Select Input Mode",
+    ["Upload Video", "Live Camera"]
 )
 
+# ============================================================
+# ===================== UPLOAD VIDEO MODE =====================
+# ============================================================
+if mode == "Upload Video":
 
-# ================= UPLOAD MODE =================
+    uploaded_file = st.file_uploader(
+        "Upload classroom video",
+        type=["mp4", "avi", "mov", "mkv"],
+    )
 
-uploaded_file = st.file_uploader(
-    "Upload classroom video",
-    type=["mp4", "avi", "mov", "mkv"],
-)
+    if uploaded_file:
 
-if uploaded_file:
+        with tempfile.TemporaryDirectory() as tmpdir:
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = os.path.join(tmpdir, uploaded_file.name)
 
-        input_path = os.path.join(tmpdir, uploaded_file.name)
+            with open(input_path, "wb") as f:
+                f.write(uploaded_file.read())
 
-        with open(input_path, "wb") as f:
-            f.write(uploaded_file.read())
+            output_video = os.path.join(tmpdir, "output_raw.mp4")
+            csv_file = os.path.join(tmpdir, "detections.csv")
 
-        output_video = os.path.join(tmpdir, "output_raw.mp4")
-        csv_file = os.path.join(tmpdir, "detections.csv")
+            if st.button("▶ Run Detection"):
 
-        if st.button("▶ Run Detection"):
+                progress_bar = st.progress(0)
+                frame_slot = st.empty()
 
-            progress_bar = st.progress(0)
-            frame_slot = st.empty()
+                def progress_cb(p):
+                    progress_bar.progress(min(int(p * 100), 100))
 
-            def progress_cb(p):
-                progress_bar.progress(min(int(p * 100), 100))
+                def frame_cb(frame):
+                    preview = cv2.resize(frame, (960, 540))
+                    rgb = cv2.cvtColor(preview, cv2.COLOR_BGR2RGB)
+                    frame_slot.image(rgb, channels="RGB")
 
-            def frame_cb(frame):
-                preview = cv2.resize(frame, (960, 540))
-                rgb = cv2.cvtColor(preview, cv2.COLOR_BGR2RGB)
-                frame_slot.image(rgb, channels="RGB", use_container_width=True)
+                with st.spinner("Running inference..."):
 
-            out_vid, out_csv = run_inference_streaming(
-                input_path,
-                output_video,
-                csv_file,
-                model_path="runs/detect/weights/best.pt",
-                progress_callback=progress_cb,
-                frame_callback=frame_cb,
-            )
+                    out_vid, out_csv = run_inference_streaming(
+                        input_path,
+                        output_video,
+                        csv_file,
+                        model_path="runs/detect/weights/best.pt",
+                        progress_callback=progress_cb,
+                        frame_callback=frame_cb,
+                    )
 
-            st.success("Inference complete!")
+                st.success("Inference complete!")
 
-            browser_video = out_vid.replace(".mp4", "_browser.mp4")
-            reencode_for_browser(out_vid, browser_video)
+                browser_video = out_vid.replace(".mp4", "_browser.mp4")
 
-            video_bytes = open(browser_video, "rb").read()
-            csv_bytes = open(out_csv, "rb").read()
+                with st.spinner("Preparing video for playback..."):
+                    reencode_for_browser(out_vid, browser_video)
 
-            analytics = compute_analytics(out_csv)
+                video_bytes = open(browser_video, "rb").read()
+                csv_bytes = open(out_csv, "rb").read()
 
-            col1, col2 = st.columns([2, 1])
+                analytics = compute_analytics(out_csv)
 
-            with col1:
-                st.video(video_bytes)
+                col1, col2 = st.columns([2, 1])
 
-            with col2:
-                st.metric("Total Students Detected", analytics["total_students"])
+                with col1:
+                    st.subheader("🎥 Annotated Video")
+                    st.video(video_bytes)
 
-            st.dataframe(analytics["student_activity_duration"])
+                    st.download_button(
+                        "⬇ Download Video",
+                        video_bytes,
+                        file_name="output_inference_browser.mp4",
+                        mime="video/mp4",
+                    )
+
+                with col2:
+                    st.subheader("📊 Summary")
+
+                    st.metric(
+                        "Total Students Detected",
+                        analytics["total_students"],
+                    )
+
+                    fig = px.bar(
+                        analytics["activity_distribution"],
+                        x="class_name",
+                        y="frames",
+                        hover_data=["students"],
+                    )
+
+                    st.plotly_chart(fig)
+
+                    st.download_button(
+                        "⬇ Download CSV",
+                        csv_bytes,
+                        file_name="detections.csv",
+                        mime="text/csv",
+                    )
+
+                st.subheader("📈 Activity Timeline")
+
+                timeline_df = analytics["timeline"].reset_index()
+
+                timeline_long = timeline_df.melt(
+                    id_vars="frame",
+                    var_name="Activity",
+                    value_name="Number of Students",
+                )
+
+                fig_timeline = px.line(
+                    timeline_long,
+                    x="frame",
+                    y="Number of Students",
+                    color="Activity",
+                )
+
+                st.plotly_chart(fig_timeline)
+
+                st.subheader("🧾 Raw Detection Log")
+                st.dataframe(analytics["raw_df"].head(400))
+
+                st.subheader("⏱ Per-Student Activity Duration (seconds)")
+                st.dataframe(analytics["student_activity_duration"])
+
+
+# ============================================================
+# ===================== LIVE CAMERA MODE ======================
+# ============================================================
+else:
+    st.info("Live camera works only on local system (not Streamlit Cloud).")
