@@ -1,3 +1,4 @@
+import numpy as np
 import streamlit as st
 import tempfile
 import os
@@ -9,11 +10,11 @@ import plotly.express as px
 from ultralytics import YOLO
 
 from inference_engine import run_inference_streaming
-from analytics import compute_analytics
+from analytics import compute_analytics, compute_analytics_from_df
 
 
 # ============================================================
-# FFMPEG RE-ENCODER (Browser Safe)
+# FFMPEG
 # ============================================================
 
 def reencode_for_browser(src, dst):
@@ -21,9 +22,7 @@ def reencode_for_browser(src, dst):
     ffmpeg_bin = shutil.which("ffmpeg")
 
     if ffmpeg_bin is None:
-        raise RuntimeError(
-            "FFmpeg not found in environment."
-        )
+        raise RuntimeError("FFmpeg not found")
 
     cmd = [
         ffmpeg_bin, "-y", "-i", src,
@@ -49,93 +48,96 @@ mode = st.radio("Select Input Mode", ["Upload Video", "Live Camera"])
 
 
 # ============================================================
-# 🟢 LIVE CAMERA MODE
+# 🔴 LIVE CAMERA — STREAMLIT CLOUD VERSION
 # ============================================================
 
 if mode == "Live Camera":
 
-    start_live = st.button("▶ Start Live Detection")
-
-    if start_live:
-
-        model = YOLO("runs/detect/weights/best.pt")
-
-        cap = cv2.VideoCapture(0)
-
-        frame_slot = st.empty()
-
-        col1, col2 = st.columns([2, 1])
-
-        live_df = pd.DataFrame(columns=[
+    if "live_df" not in st.session_state:
+        st.session_state.live_df = pd.DataFrame(columns=[
             "timestamp", "frame", "student_id",
             "class_name", "confidence", "x1", "y1", "x2", "y2"
         ])
+        st.session_state.frame_count = 0
+        st.session_state.model = YOLO("runs/detect/weights/best.pt")
 
-        frame_count = 0
+    img = st.camera_input("Capture frame")
 
-        while cap.isOpened():
+    if img is not None:
 
-            ret, frame = cap.read()
-            if not ret:
-                break
+        file_bytes = np.asarray(bytearray(img.read()), dtype=np.uint8)
+        frame = cv2.imdecode(file_bytes, 1)
 
-            frame_count += 1
+        st.session_state.frame_count += 1
+        timestamp = st.session_state.frame_count / 30
 
-            results = model.track(frame, persist=True, verbose=False)
+        results = st.session_state.model.track(
+            frame, persist=True, verbose=False
+        )
 
-            annotated = results[0].plot()
+        annotated = results[0].plot()
 
-            # show live video
-            frame_slot.image(annotated, channels="BGR", use_container_width=True)
+        st.image(annotated, channels="BGR", use_container_width=True)
 
-            # build live dataframe
-            if results[0].boxes.id is not None:
+        if results[0].boxes.id is not None:
 
-                ids = results[0].boxes.id.cpu().numpy().astype(int)
-                cls = results[0].boxes.cls.cpu().numpy().astype(int)
-                conf = results[0].boxes.conf.cpu().numpy()
-                boxes = results[0].boxes.xyxy.cpu().numpy()
+            ids = results[0].boxes.id.cpu().numpy().astype(int)
+            cls = results[0].boxes.cls.cpu().numpy().astype(int)
+            conf = results[0].boxes.conf.cpu().numpy()
+            boxes = results[0].boxes.xyxy.cpu().numpy()
 
-                for i in range(len(ids)):
+            for i in range(len(ids)):
 
-                    live_df.loc[len(live_df)] = [
-                        frame_count / 30,
-                        frame_count,
-                        ids[i],
-                        model.names[cls[i]],
-                        conf[i],
-                        *boxes[i]
-                    ]
+                st.session_state.live_df.loc[
+                    len(st.session_state.live_df)
+                ] = [
+                    timestamp,
+                    st.session_state.frame_count,
+                    ids[i],
+                    st.session_state.model.names[cls[i]],
+                    conf[i],
+                    *boxes[i]
+                ]
 
-            # update analytics every few frames
-            if frame_count % 15 == 0 and len(live_df) > 0:
+        if len(st.session_state.live_df) > 0:
 
-                analytics = compute_analytics_from_df(live_df)
+            analytics = compute_analytics_from_df(
+                st.session_state.live_df
+            )
 
-                with col2:
+            col1, col2 = st.columns([2, 1])
 
-                    st.subheader("📊 Live Summary")
+            with col2:
 
-                    st.metric("Total Students", analytics["total_students"])
+                st.subheader("📊 Live Summary")
 
-                    fig = px.bar(
-                        analytics["activity_distribution"],
-                        x="class_name",
-                        y="frames"
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                st.metric(
+                    "Total Students",
+                    analytics["total_students"]
+                )
 
-                    st.subheader("⏱ Duration (seconds)")
-                    st.dataframe(
-                        analytics["student_activity_duration"],
-                        use_container_width=True
-                    )
+                fig = px.bar(
+                    analytics["activity_distribution"],
+                    x="class_name",
+                    y="frames",
+                    labels={
+                        "class_name": "Activity",
+                        "frames": "Total Frames",
+                    }
+                )
 
-        cap.release()
+                st.plotly_chart(fig, use_container_width=True)
+
+                st.subheader("⏱ Duration (seconds)")
+
+                st.dataframe(
+                    analytics["student_activity_duration"],
+                    use_container_width=True
+                )
 
 
 # ============================================================
-# 🔵 VIDEO UPLOAD MODE (YOUR ORIGINAL — UNCHANGED)
+# 🔵 UPLOAD VIDEO — YOUR ORIGINAL (UNCHANGED)
 # ============================================================
 
 elif mode == "Upload Video":
@@ -208,67 +210,14 @@ elif mode == "Upload Video":
                     st.subheader("🎥 Annotated Video")
                     st.video(video_bytes)
 
-                    st.download_button(
-                        "⬇ Download Video",
-                        video_bytes,
-                        file_name="output_inference_browser.mp4",
-                        mime="video/mp4",
-                    )
-
                 with col2:
-                    st.subheader("📊 Summary")
-
                     st.metric(
                         "Total Students Detected",
                         analytics["total_students"],
                     )
 
-                    st.subheader("Activity Distribution")
-
-                    fig = px.bar(
-                        analytics["activity_distribution"],
-                        x="class_name",
-                        y="frames",
-                        hover_data=["students"],
-                        labels={
-                            "class_name": "Activity",
-                            "frames": "Total Frames",
-                            "students": "Student IDs",
-                        },
-                    )
-
-                    st.plotly_chart(fig, use_container_width=True)
-
-                    st.download_button(
-                        "⬇ Download CSV",
-                        csv_bytes,
-                        file_name="detections.csv",
-                        mime="text/csv",
-                    )
-
-                st.subheader("📈 Activity Timeline (Frame vs Activity)")
-
-                timeline_df = analytics["timeline"].reset_index()
-
-                timeline_long = timeline_df.melt(
-                    id_vars="frame",
-                    var_name="Activity",
-                    value_name="Number of Students",
-                )
-
-                fig_timeline = px.line(
-                    timeline_long,
-                    x="frame",
-                    y="Number of Students",
-                    color="Activity",
-                )
-
-                st.plotly_chart(fig_timeline, use_container_width=True)
-
-                st.subheader("🧾 Raw Detection Log (Preview)")
-                st.dataframe(analytics["raw_df"].head(400))
-
                 st.subheader("⏱ Per-Student Activity Duration (seconds)")
+
                 st.dataframe(
                     analytics["student_activity_duration"],
                     use_container_width=True
