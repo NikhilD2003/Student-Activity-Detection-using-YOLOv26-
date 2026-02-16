@@ -4,7 +4,7 @@ import os
 import cv2
 import subprocess
 import shutil
-import plotly.express as px   # ✅ added for proper chart
+import plotly.express as px   # already used for bar chart
 
 from inference_engine import run_inference_streaming
 from analytics import compute_analytics
@@ -66,8 +66,6 @@ if uploaded_file:
         if st.button("▶ Run Detection"):
 
             progress_bar = st.progress(0)
-
-            # ✅ create once (important for speed)
             frame_slot = st.empty()
 
             # ----------------------------------
@@ -153,7 +151,6 @@ if uploaded_file:
 
                 st.subheader("Activity Distribution")
 
-                # ✅ NEW PLOTLY BAR CHART
                 fig = px.bar(
                     analytics["activity_distribution"],
                     x="class_name",
@@ -175,8 +172,34 @@ if uploaded_file:
                     mime="text/csv",
                 )
 
+            # ====================================================
+            # ✅ UPDATED TIMELINE (ONLY CHANGE)
+            # ====================================================
+
             st.subheader("📈 Activity Timeline (Frame vs Activity)")
-            st.line_chart(analytics["timeline"])
+
+            timeline_df = analytics["timeline"].reset_index()
+
+            timeline_long = timeline_df.melt(
+                id_vars="frame",
+                var_name="Activity",
+                value_name="Number of Students",
+            )
+
+            fig_timeline = px.line(
+                timeline_long,
+                x="frame",
+                y="Number of Students",
+                color="Activity",
+                labels={
+                    "frame": "Frame Number (Time)",
+                    "Number of Students": "Students Performing Activity",
+                },
+            )
+
+            st.plotly_chart(fig_timeline, use_container_width=True)
+
+            # ====================================================
 
             st.subheader("🧾 Raw Detection Log (Preview)")
             st.dataframe(analytics["raw_df"].head(400))
