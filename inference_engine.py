@@ -19,7 +19,7 @@ def run_inference_streaming(
     frame_callback=None,
 ):
 
-    CONF_THRESH = 0.30
+    CONF_THRESH = 0.40
     IOU_THRESH = 0.45
     IMG_SIZE = 640
 
