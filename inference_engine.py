@@ -15,9 +15,9 @@ def run_inference_streaming(
     frame_callback=None,
 ):
 
-    CONF_THRESH = 0.40
+    CONF_THRESH = 0.30
     IOU_THRESH = 0.45
-    IMG_SIZE = 768
+    IMG_SIZE = 640
 
     TRACKER_CFG = "botsort.yaml"
     DEVICE = None
@@ -91,6 +91,7 @@ def run_inference_streaming(
             tracker=TRACKER_CFG,
             device=DEVICE,
             verbose=False,
+            rect=True
         )
 
         annotated = frame.copy()
